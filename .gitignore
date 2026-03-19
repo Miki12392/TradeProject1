@@ -1,6 +1,19 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+
+# IDE
 .idea/
-*.log
+*.iml
+
+# Data
+data/storage/
+*.parquet
+
+# Secrets
+.env
