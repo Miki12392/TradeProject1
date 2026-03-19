@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Dict, Optional
+import numpy as np
 from strategy.micro_margin_math import GridParams
 
 
@@ -14,7 +15,6 @@ class Position:
     is_open: bool = True
 
     def check_exit(self, high_price: float, low_price: float) -> Optional[float]:
-        """Zwraca Gross PnL sprawdzając uderzenia po knotach (OHLC)."""
         if not self.is_open:
             return None
 
@@ -50,7 +50,6 @@ class GridPositionManager:
         for pos in self.active_positions:
             gross_pnl = pos.check_exit(high_price, low_price)
             if gross_pnl is not None:
-                # Rozliczamy obrót (Wejście + Wyjście po cenie docelowej)
                 exit_price = pos.tp_price if gross_pnl > 0 else pos.sl_price
                 turnover = (pos.size_coin * pos.entry_price) + (pos.size_coin * exit_price)
                 fee_cost = turnover * (self.fee_bps / 10_000.0)
@@ -62,25 +61,28 @@ class GridPositionManager:
         self.active_positions = [p for p in self.active_positions if p.is_open]
         return closed_events
 
-    def process_signal(self, current_price: float, signal: float) -> bool:
-        if signal == 0.0:
-            return False
-        if len(self.active_positions) >= self.params.effective_levels:
+    def process_signal(self, current_price: float, signal: float, current_vol: float) -> bool:
+        """
+        Zaktualizowana wersja: przyjmuje bieżącą zmienność (current_vol)
+        do wyznaczenia Triple Barrier.
+        """
+        if signal == 0.0 or len(self.active_positions) >= self.params.effective_levels:
             return False
 
         side = 1 if signal > 0 else -1
-        # Uwzględnienie slippage (Kupujemy drożej, sprzedajemy taniej)
         slippage = current_price * self.slippage_pct
         entry_price = current_price + slippage if side == 1 else current_price - slippage
 
         size_usd = self.params.position_size_usd_per_level()
         size_coin = size_usd / entry_price
 
-        tp_dist = self.params.tp_distance_at(entry_price)
-        sl_dist = self.params.sl_distance_at(entry_price)
+        # DYNAMICZNE BARIERY (de Prado)
+        # Używamy zmienności do określenia szerokości bariery
+        # Mnożnik 2.0 dla TP i 3.0 dla SL (asymetria chroniąca kapitał)
+        vol_distance = entry_price * current_vol * 2.0
 
-        tp_price = entry_price + (tp_dist if side == 1 else -tp_dist)
-        sl_price = entry_price - (sl_dist if side == 1 else -sl_dist)
+        tp_price = entry_price + (vol_distance if side == 1 else -vol_distance)
+        sl_price = entry_price - (vol_distance * 1.5 if side == 1 else -vol_distance * 1.5)
 
         self.trade_counter += 1
         self.active_positions.append(
