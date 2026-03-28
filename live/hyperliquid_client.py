@@ -32,9 +32,23 @@ class HyperliquidClient:
         return float(mids.get(symbol, 0.0))
 
     def get_balance(self) -> float:
-        """Pobiera całkowitą wartość Twojego portfela w USD."""
+        """Pobiera całkowitą wartość portfela w USD (Z uwzględnieniem Unified Account)."""
         if not HL_WALLET_ADDRESS:
             return 0.0
-        state = self.info.user_state(HL_WALLET_ADDRESS)
-        # Margin Summary zawiera całkowitą wartość konta (margin + zysk)
-        return float(state["marginSummary"]["accountValue"])
+
+        try:
+            # 1. Sprawdzamy nowe konto zunifikowane (Spot / Unified)
+            spot_state = self.info.spot_user_state(HL_WALLET_ADDRESS)
+            balances = spot_state.get("balances", [])
+
+            for b in balances:
+                if b['coin'] == 'USDC':
+                    return float(b['total'])
+
+            # 2. Jeśli pusto, sprawdzamy klasyczny portfel Perps (Margin)
+            state = self.info.user_state(HL_WALLET_ADDRESS)
+            return float(state["marginSummary"]["accountValue"])
+
+        except Exception as e:
+            print(f"[ERROR] Nie udało się pobrać balansu: {e}")
+            return 0.0
